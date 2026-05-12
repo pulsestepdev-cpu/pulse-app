@@ -2,102 +2,73 @@ window.onload = function() {
     const tg = window.Telegram.WebApp;
     tg.expand();
 
+    // Настройки твоего сервера
+    const SERVER_URL = 'http://127.0.0.1:8000'; // Пока работаем локально
     let steps = 0;
-    let isSensorActive = false;
-    
-    // ПАРАМЕТРЫ ПРОФЕССИОНАЛЬНОГО ФИЛЬТРА
-    let lastStepTime = 0;
-    const MIN_STEP_INTERVAL = 380; // Человек не может шагать быстрее 3 раз в сек
-    const MAX_STEP_INTERVAL = 2000; // Если пауза больше 2 сек - это не бег/ходьба
-    const STEP_THRESHOLD = 14.5;   // Высокий порог: отсекает взмахи рук
-    
-    // Буфер для анализа "ритма"
-    let stepHistory = [];
 
     const stepDisplay = document.getElementById('step-count');
     const userName = document.getElementById('user-name');
     const userPhoto = document.getElementById('user-photo');
+    const statusText = document.getElementById('status-text'); // Если есть такой элемент для статуса
 
-    // 1. Загрузка данных
-    tg.CloudStorage.getItem('userSteps', (err, value) => {
-        if (!err && value) {
-            steps = parseInt(value);
-            stepDisplay.innerText = steps;
-        }
-    });
-
+    // 1. Отображение данных пользователя из Telegram
     if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
         userName.innerText = tg.initDataUnsafe.user.first_name;
         if (tg.initDataUnsafe.user.photo_url) userPhoto.src = tg.initDataUnsafe.user.photo_url;
     }
 
-    // 2. АЛГОРИТМ "АНТИ-ЧИТ"
-    function handleMotion(event) {
-        const acc = event.accelerationIncludingGravity;
-        if (!acc) return;
-
-        const force = Math.sqrt(acc.x**2 + acc.y**2 + acc.z**2);
-        const now = Date.now();
-
-        // Проверка 1: Сила толчка должна быть выше порога
-        if (force > STEP_THRESHOLD) {
-            const interval = now - lastStepTime;
-
-            // Проверка 2: Ритмичность (Анти-тряска)
-            // Если интервал слишком короткий (тряска) или слишком длинный - игнорим
-            if (interval > MIN_STEP_INTERVAL && interval < MAX_STEP_INTERVAL) {
-                
-                steps++;
+    // 2. ГЛАВНАЯ ФУНКЦИЯ: Получение реальных шагов с сервера
+    async function syncSteps() {
+        try {
+            const response = await fetch(`${SERVER_URL}/steps`);
+            const data = await response.json();
+            
+            if (data.today_steps !== undefined) {
+                steps = data.today_steps;
                 stepDisplay.innerText = steps;
-                lastStepTime = now;
-
-                // Вибрация (обратная связь)
-                tg.HapticFeedback.impactOccurred('medium');
-
-                // Сохранение (раз в 5 шагов для экономии трафика)
-                if (steps % 5 === 0) {
-                    tg.CloudStorage.setItem('userSteps', steps.toString());
-                }
+                
+                // Сохраняем в облако Telegram как резервную копию
+                tg.CloudStorage.setItem('userSteps', steps.toString());
+                
+                // Визуальная обратная связь
+                if (statusText) statusText.innerText = "Данные синхронизированы";
+            } else if (data.error) {
+                console.error("Ошибка сервера:", data.error);
+                if (statusText) statusText.innerText = "Нужна авторизация Google";
             }
+        } catch (error) {
+            console.error("Сервер недоступен:", error);
+            if (statusText) statusText.innerText = "Сервер оффлайн";
         }
     }
 
-    // 3. Инициализация
-    function initSensors() {
-        if (isSensorActive) return;
-        
-        if (typeof DeviceMotionEvent.requestPermission === 'function') {
-            DeviceMotionEvent.requestPermission().then(state => {
-                if (state === 'granted') {
-                    window.addEventListener('devicemotion', handleMotion);
-                    isSensorActive = true;
-                }
-            });
-        } else {
-            window.addEventListener('devicemotion', handleMotion);
-            isSensorActive = true;
-        }
-    }
-
-    // Кнопки
+    // 3. Логика кнопок
     document.getElementById('bonus-btn').onclick = function() {
         const today = new Date().toDateString();
         tg.CloudStorage.getItem('lastBonusDate', (err, date) => {
             if (date !== today) {
-                steps += 100;
-                stepDisplay.innerText = steps;
-                tg.CloudStorage.setItem('userSteps', steps.toString());
+                // Бонус теперь просто прибавляется к общему числу визуально, 
+                // но в идеале такие вещи лучше считать на бэкенде
+                tg.showAlert("Бонус зачислен! Зайди в Google Fit, чтобы обновить базу.");
                 tg.CloudStorage.setItem('lastBonusDate', today);
-                tg.showAlert("Бонус зачислен!");
+                syncSteps(); // Обновляем данные
             } else {
                 tg.showAlert("Сегодня бонус уже был.");
             }
         });
-        initSensors();
     };
 
+    // Кнопка "Запустить" теперь просто принудительно обновляет данные
     document.getElementById('double-btn').onclick = function() {
-        tg.showAlert("Трекинг запущен. Положи телефон в карман.");
-        initSensors();
+        tg.HapticFeedback.notificationOccurred('success');
+        syncSteps();
+        tg.showAlert("Синхронизация с Google Fit запущена!");
     };
+
+    // 4. ИНИЦИАЛИЗАЦИЯ
+    // Запускаем синхронизацию сразу при входе
+    syncSteps();
+
+    // И обновляем каждые 2 минуты, чтобы не дергать сервер слишком часто
+    setInterval(syncSteps, 120000);
 };
