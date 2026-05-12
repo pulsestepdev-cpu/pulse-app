@@ -3,20 +3,18 @@ window.onload = function() {
     tg.expand();
 
     let steps = 0;
-    let lastAcceleration = 0;
+    let lastX, lastY, lastZ;
     let isSensorActive = false;
 
     const stepDisplay = document.getElementById('step-count');
     const userName = document.getElementById('user-name');
     const userPhoto = document.getElementById('user-photo');
 
-    // 1. Настройка профиля
+    // 1. Загрузка данных
     if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
-        const user = tg.initDataUnsafe.user;
-        userName.innerText = user.first_name;
-        if (user.photo_url) userPhoto.src = user.photo_url;
+        userName.innerText = tg.initDataUnsafe.user.first_name;
+        if (tg.initDataUnsafe.user.photo_url) userPhoto.src = tg.initDataUnsafe.user.photo_url;
 
-        // Загружаем шаги из памяти Telegram
         tg.CloudStorage.getItem('userSteps', (err, value) => {
             if (!err && value) {
                 steps = parseInt(value);
@@ -25,74 +23,79 @@ window.onload = function() {
         });
     }
 
-    // 2. ДВИГАТЕЛЬ ШАГОВ (Чувствительный)
+    // 2. Улучшенный алгоритм шагов (чувствительный к ходьбе)
     function handleMotion(event) {
-        let acc = event.accelerationIncludingGravity;
-        if (!acc) return;
+        let acc = event.acceleration; // Используем ускорение БЕЗ гравитации
+        if (!acc || acc.x === null) return;
 
-        // Считаем вектор движения
-        let totalAcc = Math.sqrt(acc.x**2 + acc.y**2 + acc.z**2);
-        let delta = Math.abs(totalAcc - lastAcceleration);
+        if (lastX !== undefined) {
+            let deltaX = Math.abs(acc.x - lastX);
+            let deltaY = Math.abs(acc.y - lastY);
+            let deltaZ = Math.abs(acc.z - lastZ);
 
-        // Порог 8.0 — поймает даже легкий шаг
-        if (delta > 8.0) { 
-            steps++;
-            stepDisplay.innerText = steps;
-            
-            // Вибрация на каждый шаг для обратной связи
-            tg.HapticFeedback.impactOccurred('light'); 
-            
-            // Сохраняем в облако каждые 5 шагов
-            if (steps % 5 === 0) {
-                tg.CloudStorage.setItem('userSteps', steps.toString());
+            // Порог 2.5 для чистого ускорения — это стандарт для ходьбы в руке
+            if (deltaX + deltaY + deltaZ > 2.5) {
+                steps++;
+                stepDisplay.innerText = steps;
+                
+                // Мгновенное сохранение в память каждые 2 шага
+                if (steps % 2 === 0) {
+                    tg.CloudStorage.setItem('userSteps', steps.toString());
+                    tg.HapticFeedback.impactOccurred('light');
+                }
             }
         }
-        lastAcceleration = totalAcc;
+        
+        lastX = acc.x;
+        lastY = acc.y;
+        lastZ = acc.z;
     }
 
-    // 3. ЗАПУСК ДАТЧИКОВ
     function initSensors() {
         if (isSensorActive) return;
-
         if (typeof DeviceMotionEvent.requestPermission === 'function') {
-            // Для iPhone (iOS)
-            DeviceMotionEvent.requestPermission()
-                .then(state => {
-                    if (state === 'granted') {
-                        window.addEventListener('devicemotion', handleMotion);
-                        isSensorActive = true;
-                    }
-                });
+            DeviceMotionEvent.requestPermission().then(state => {
+                if (state === 'granted') {
+                    window.addEventListener('devicemotion', handleMotion);
+                    isSensorActive = true;
+                }
+            });
         } else {
-            // Для Android
             window.addEventListener('devicemotion', handleMotion);
             isSensorActive = true;
         }
     }
 
-    // 4. ОБРАБОТКА КНОПОК
-    const doubleBtn = document.getElementById('double-btn');
+    // 3. Кнопки с проверкой времени
     const bonusBtn = document.getElementById('bonus-btn');
-
-    if (doubleBtn) {
-        doubleBtn.onclick = function() {
-            tg.HapticFeedback.notificationOccurred('success');
-            tg.showAlert('Множитель x2 активирован!');
-            initSensors(); // Запускаем датчики при нажатии
-        };
-    }
+    const doubleBtn = document.getElementById('double-btn');
 
     if (bonusBtn) {
         bonusBtn.onclick = function() {
-            tg.HapticFeedback.impactOccurred('medium');
-            steps += 100;
-            stepDisplay.innerText = steps;
-            tg.CloudStorage.setItem('userSteps', steps.toString());
-            tg.showAlert('Бонус +100 шагов зачислен!');
-            initSensors(); // Запускаем датчики при нажатии
+            const today = new Date().toDateString(); // Получаем текущую дату (напр. "Tue May 12 2026")
+
+            tg.CloudStorage.getItem('lastBonusDate', (err, lastDate) => {
+                if (lastDate === today) {
+                    tg.showAlert("Ты уже забирал бонус сегодня! Приходи завтра.");
+                } else {
+                    steps += 100;
+                    stepDisplay.innerText = steps;
+                    tg.CloudStorage.setItem('userSteps', steps.toString());
+                    tg.CloudStorage.setItem('lastBonusDate', today); // Запоминаем день
+                    tg.showAlert("Бонус +100 зачислен!");
+                    tg.HapticFeedback.notificationOccurred('success');
+                }
+            });
+            initSensors();
         };
     }
 
-    // Запуск датчиков при любом тапе по экрану (для надежности)
+    if (doubleBtn) {
+        doubleBtn.onclick = function() {
+            tg.showAlert("Множитель активен! Считаем каждый шаг.");
+            initSensors();
+        };
+    }
+
     document.body.onclick = initSensors;
 };
