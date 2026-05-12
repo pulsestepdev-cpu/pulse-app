@@ -24,22 +24,20 @@ window.onload = function() {
             const data = await response.json();
             
             if (data.today_steps !== undefined) {
-                steps = data.today_steps;
-                stepDisplay.innerText = steps;
-                
-                // Сохраняем в облако Telegram как резервную копию
-                tg.CloudStorage.setItem('userSteps', steps.toString());
-                
-                // Визуальная обратная связь
-                if (statusText) statusText.innerText = "Данные синхронизированы";
-            } else if (data.error) {
-                console.error("Ошибка сервера:", data.error);
-                if (statusText) statusText.innerText = "Нужна авторизация Google";
-            }
-        } catch (error) {
-            console.error("Сервер недоступен:", error);
-            if (statusText) statusText.innerText = "Сервер оффлайн";
+            steps = data.today_steps;
+            stepDisplay.innerText = steps;
+            
+            // Связь есть — делаем точку зеленой
+            indicator.classList.add('status-online');
+        } else {
+            // Ошибка в данных — точка красная
+            indicator.classList.remove('status-online');
         }
+    } catch (error) {
+        // Сервер выключен — точка красная
+        indicator.classList.remove('status-online');
+        console.error("Сервер недоступен");
+    }
     }
 
     // 3. Логика кнопок

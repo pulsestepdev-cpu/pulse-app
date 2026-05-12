@@ -115,3 +115,26 @@ body {
     color: white;
     border: 1px solid rgba(255, 255, 255, 0.1);
 }
+.avatar-container {
+    position: relative;
+    display: inline-block;
+}
+
+.status-dot {
+    position: absolute;
+    bottom: 4px;
+    right: 4px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background-color: #ff4b4b; /* По умолчанию красный (нет связи) */
+    border: 2px solid #1a1a1a; /* Чтобы отделялась от фото */
+    box-shadow: 0 0 10px #ff4b4b;
+    transition: all 0.3s ease;
+}
+
+/* Класс для активного состояния */
+.status-online {
+    background-color: #00ffa3;
+    box-shadow: 0 0 10px #00ffa3;
+}
