@@ -5,106 +5,99 @@ window.onload = function() {
     let steps = 0;
     let isSensorActive = false;
     
-    // Переменные для фильтрации "шума" (чтобы не считало махи руками)
+    // ПАРАМЕТРЫ ПРОФЕССИОНАЛЬНОГО ФИЛЬТРА
     let lastStepTime = 0;
-    const stepCooldown = 350; // Минимум 350мс между шагами (физика человека)
-    const sensitivity = 13.5; // Порог силы толчка (отсекает простые движения)
+    const MIN_STEP_INTERVAL = 380; // Человек не может шагать быстрее 3 раз в сек
+    const MAX_STEP_INTERVAL = 2000; // Если пауза больше 2 сек - это не бег/ходьба
+    const STEP_THRESHOLD = 14.5;   // Высокий порог: отсекает взмахи рук
+    
+    // Буфер для анализа "ритма"
+    let stepHistory = [];
 
     const stepDisplay = document.getElementById('step-count');
     const userName = document.getElementById('user-name');
     const userPhoto = document.getElementById('user-photo');
 
-    // 1. ЗАГРУЗКА ДАННЫХ
+    // 1. Загрузка данных
+    tg.CloudStorage.getItem('userSteps', (err, value) => {
+        if (!err && value) {
+            steps = parseInt(value);
+            stepDisplay.innerText = steps;
+        }
+    });
+
     if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
         userName.innerText = tg.initDataUnsafe.user.first_name;
         if (tg.initDataUnsafe.user.photo_url) userPhoto.src = tg.initDataUnsafe.user.photo_url;
-
-        tg.CloudStorage.getItem('userSteps', (err, value) => {
-            if (!err && value) {
-                steps = parseInt(value);
-                stepDisplay.innerText = steps;
-            }
-        });
     }
 
-    // 2. УМНЫЙ ШАГОМЕР (Эмуляция железного датчика)
+    // 2. АЛГОРИТМ "АНТИ-ЧИТ"
     function handleMotion(event) {
         const acc = event.accelerationIncludingGravity;
         if (!acc) return;
 
-        // Считаем векторную сумму всех сил
-        const totalForce = Math.sqrt(acc.x**2 + acc.y**2 + acc.z**2);
+        const force = Math.sqrt(acc.x**2 + acc.y**2 + acc.z**2);
         const now = Date.now();
 
-        // Условие: резкий импульс (шаг) + достаточное время с прошлого шага
-        if (totalForce > sensitivity && (now - lastStepTime) > stepCooldown) {
-            steps++;
-            stepDisplay.innerText = steps;
-            lastStepTime = now;
+        // Проверка 1: Сила толчка должна быть выше порога
+        if (force > STEP_THRESHOLD) {
+            const interval = now - lastStepTime;
 
-            // Вибрация подтверждает, что шаг засчитан
-            tg.HapticFeedback.impactOccurred('medium');
+            // Проверка 2: Ритмичность (Анти-тряска)
+            // Если интервал слишком короткий (тряска) или слишком длинный - игнорим
+            if (interval > MIN_STEP_INTERVAL && interval < MAX_STEP_INTERVAL) {
+                
+                steps++;
+                stepDisplay.innerText = steps;
+                lastStepTime = now;
 
-            // Сохраняем каждые 2 шага, чтобы не терять прогресс
-            if (steps % 2 === 0) {
-                tg.CloudStorage.setItem('userSteps', steps.toString());
+                // Вибрация (обратная связь)
+                tg.HapticFeedback.impactOccurred('medium');
+
+                // Сохранение (раз в 5 шагов для экономии трафика)
+                if (steps % 5 === 0) {
+                    tg.CloudStorage.setItem('userSteps', steps.toString());
+                }
             }
         }
     }
 
-    // 3. ЗАПУСК ДВИГАТЕЛЯ (Активация датчиков)
+    // 3. Инициализация
     function initSensors() {
         if (isSensorActive) return;
-
+        
         if (typeof DeviceMotionEvent.requestPermission === 'function') {
-            // Для iOS (iPhone)
             DeviceMotionEvent.requestPermission().then(state => {
                 if (state === 'granted') {
                     window.addEventListener('devicemotion', handleMotion);
                     isSensorActive = true;
-                    console.log("Сенсоры iOS запущены");
                 }
-            }).catch(e => console.error(e));
+            });
         } else {
-            // Для Android
             window.addEventListener('devicemotion', handleMotion);
             isSensorActive = true;
-            console.log("Сенсоры Android запущены");
         }
     }
 
-    // 4. КНОПКИ С ЛОГИКОЙ
-    const bonusBtn = document.getElementById('bonus-btn');
-    const doubleBtn = document.getElementById('double-btn');
+    // Кнопки
+    document.getElementById('bonus-btn').onclick = function() {
+        const today = new Date().toDateString();
+        tg.CloudStorage.getItem('lastBonusDate', (err, date) => {
+            if (date !== today) {
+                steps += 100;
+                stepDisplay.innerText = steps;
+                tg.CloudStorage.setItem('userSteps', steps.toString());
+                tg.CloudStorage.setItem('lastBonusDate', today);
+                tg.showAlert("Бонус зачислен!");
+            } else {
+                tg.showAlert("Сегодня бонус уже был.");
+            }
+        });
+        initSensors();
+    };
 
-    if (bonusBtn) {
-        bonusBtn.onclick = function() {
-            const today = new Date().toDateString();
-            
-            tg.CloudStorage.getItem('lastBonusDate', (err, lastDate) => {
-                if (lastDate === today) {
-                    tg.showAlert("Бонус уже получен! Жди завтрашнего дня.");
-                } else {
-                    steps += 100;
-                    stepDisplay.innerText = steps;
-                    tg.CloudStorage.setItem('userSteps', steps.toString());
-                    tg.CloudStorage.setItem('lastBonusDate', today);
-                    tg.showAlert("Бонус +100 шагов зачислен!");
-                    tg.HapticFeedback.notificationOccurred('success');
-                }
-            });
-            initSensors(); // Включаем датчики при нажатии
-        };
-    }
-
-    if (doubleBtn) {
-        doubleBtn.onclick = function() {
-            tg.showAlert("Режим отслеживания включен. Удачи на прогулке!");
-            tg.HapticFeedback.impactOccurred('heavy');
-            initSensors(); // Включаем датчики при нажатии
-        };
-    }
-
-    // Резервный запуск при любом клике по экрану
-    document.body.onclick = initSensors;
+    document.getElementById('double-btn').onclick = function() {
+        tg.showAlert("Трекинг запущен. Положи телефон в карман.");
+        initSensors();
+    };
 };
